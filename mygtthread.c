@@ -10,8 +10,12 @@ struct gtthread_t
 {
 	long int id;
 	struct gtthread_t* next;  //pointer to next node
-	int terminted;
+	struct gtthread_t* parent;
+	int terminated;
 	ucontext_t context;	
+	long int num_children;
+	void *retval;
+
 }gtarray[MAX_THREADS];
 
 /*global declarations*/
@@ -38,23 +42,23 @@ int  gtthread_create(struct gtthread_t *thread,
                      void *(*start_routine)(void *),
                      void *arg);
 
-int  gtthread_join(gtthread_t thread, void **status);
-/*
+int  gtthread_join(struct gtthread_t thread, void **status);
+
 void gtthread_exit(void *retval);
 void gtthread_yield(void);
+/*
 int  gtthread_equal(gtthread_t t1, gtthread_t t2);
 int  gtthread_cancel(gtthread_t thread);
 gtthread_t gtthread_self(void);*/
-
-void
-     do_stuff (void)
+/*
+void do_stuff (void)
      {
        puts ("Doing stuff while waiting for alarm....");
      }
 
 while (keep_going)
          do_stuff ();
-
+*/
 
 void swap_thread()
 {
@@ -96,31 +100,56 @@ void add_thread(struct gtthread_t *thread)
 	count++; // increment count of active threads
 }
 
+void delete_thread(struct gtthread_t *thread)
+{
+	struct gtthread_t *temp = head;
+	struct gtthread_t *temp_del; //to delete
+
+	//check if *thread is head or tail
+	if(thread == head)
+	{
+		temp_del = head;
+		temp_del->parent->num_children--;
+		head = head->next;
+		tail->next = head;
+		delete(temp_del);
+	}
+
+	while(temp->next!= head)
+	{
+		if(temp->next->id = thread->id) //delete next thread
+		{
+			temp_del = temp->next;
+			if(temp_del == tail)
+				tail = temp;
+			temp->next = temp->next->next;
+			temp_del->parent->num_children--;
+			delete(temp_del);
+		}
+
+	}
+
+}
+
 void gtthread_init(long period)
 {
 	period_t = period;
 	main_t = &gtarray[0];
 	main_t->id=gt_id;
 	main_t->next= NULL;
+	main_t->parent = main_t;
+	main_t->num_children = 0;
 	gt_id++;
 	current = main_t;
 	add_thread(main_t);
 	init_timer(period_t);	
 }
 
-void hello()
+void gtthread_retarg(void *(*start_routine)(void *),void *arg)
 {
-	int a = 10;
-	int i;
-	for(i = 0; i < a;i++)
-	{
-		printf("in hello:%d\n", i);
-	}
-	//swapcontext(&gtarray[1].context,&gtarray[2].context);
-	return; 
+	void *retval = start_routine(arg);
+	gtthread_exit(retval);
 }
-
-
 
 int gtthread_create(struct gtthread_t *thread, void *(*start_routine)(void *),void *arg)
 {
@@ -128,24 +157,60 @@ int gtthread_create(struct gtthread_t *thread, void *(*start_routine)(void *),vo
 	new_t->id = gt_id;
 	gt_id++;
 	new_t->next = NULL;
+	new_t->terminated= 0;
+	new_t->parent = current;
+	new_t->num_children = 0;
+	current->num_children++;
 	thread = new_t;
 	char stack1[16384];
 	getcontext(&new_t->context);
 	new_t->context.uc_stack.ss_sp = stack1;
         new_t->context.uc_stack.ss_size = sizeof(stack1);
         new_t->context.uc_link = 0; // why???
-	makecontext(&new_t->context, start_routine,0);
+	makecontext(&new_t->context, gtthread_retarg,2,start_routine,arg);
 	add_thread(new_t);
 	current = new_t;
 }
 
-int  gtthread_join(gtthread_t thread, void **status)
+int  gtthread_join(struct gtthread_t thread, void **status)
 {
+	long int temp_id = thread.id;	
+	struct gtthread *temp = &gtarray[temp_id];
+	while(temp->terminated!=1)
+		gtthread_yield();
+}
+
+void gtthread_yield()
+{
+	sched_yield();
+}
+
+void gtthread_exit(void *retval)
+{
+	current->terminated = 1;	
+	current->retval = retval;
+	while(current->num_children>0)
+		gtthread_yield();
 	
+	if(current = main_t)
+		exit(0);
+	delete_thread(current);
 
 
 }
 
+
+void hello()
+{
+	keep_going = 0;
+	printf("woohoo\n");
+}
+
+void hello2()
+{
+	//keep_going = 0;
+	printf("in hello2\n");
+}
 
 void main()
 {
