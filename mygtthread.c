@@ -31,7 +31,7 @@ long gt_id = 0; // counter to assign id's to threads
 volatile sig_atomic_t keep_going = 1;
 
 struct itimerval timer;
-ucontext_t ctxt_main;
+ucontext_t ctxt_main,t1;
 sigset_t block;
 
 /* function declarations */
@@ -62,10 +62,19 @@ while (keep_going)
 
 void swap_thread()
 {
-	printf("in swap\n");	
-	init_timer(period_t);
-	swapcontext(&current->context,&current->next->context);
-	current = current->next;
+	//if(ll->kill==0 && (ll->count>1 || (ll->count==1 && ll->curr->gt_id==ll->curr->next->gt_id))){
+	//printf("in swap\n");
+	if(count > 1 || (count ==1 && (current->id == current->next->id)))
+	{	
+		init_timer(period_t);
+		//printf("current is %ld, next is %ld, next next is %ld\n",current->id, current->next->id, current->next->next->id );
+		//printf("current is %ld, next is %ld\n",current->context.uc_stack.ss_size, current->next->context.uc_stack.ss_size );
+		struct gtthread_t *prev = current;
+		current = current->next;
+		swapcontext(&prev->context,&current->context);
+		//swapcontext(&prev->context,&t1);
+	}
+	
 }
 
 
@@ -77,9 +86,9 @@ void init_timer(long period){
 	timer.it_value.tv_usec=period;
 	timer.it_interval.tv_sec=0;
 	timer.it_interval.tv_usec=period;
-	printf("timer is %ld\n", period);
-	signal(SIGPROF,swap_thread);
-	setitimer(ITIMER_PROF,&timer,NULL);
+	//printf("timer is %ld\n", period);
+	signal(SIGVTALRM,swap_thread);
+	setitimer(ITIMER_VIRTUAL,&timer,NULL);
 	//sleep(10);
 }
 
@@ -104,7 +113,7 @@ void delete_thread(struct gtthread_t *thread)
 {
 	struct gtthread_t *temp = head;
 	struct gtthread_t *temp_del; //to delete
-
+	//printf("here\n");
 	//check if *thread is head or tail
 	if(thread == head)
 	{
@@ -112,25 +121,39 @@ void delete_thread(struct gtthread_t *thread)
 		temp_del->parent->num_children--;
 		head = head->next;
 		tail->next = head;
-		delete(temp_del);
+		free(temp_del);
 	}
-
+	//printf("thread to be deleted: %ld\n", thread->id);
+	//printf("in delete:current is %ld, next is %ld, next next is %ld\n",current->id, current->next->id, current->next->next->id );
 	while(temp->next!= head)
 	{
-		if(temp->next->id = thread->id) //delete next thread
+		if(temp->next->id == thread->id) //delete next thread
 		{
 			temp_del = temp->next;
+			//printf("here3\n");
 			if(temp_del == tail)
 				tail = temp;
 			temp->next = temp->next->next;
+			//printf("here4\n");
 			temp_del->parent->num_children--;
-			delete(temp_del);
+			current = temp;
+			//free(temp_del);
 		}
+		else
+			temp = temp->next;
 
 	}
+	//printf("after delete:current is %ld, next is %ld, next next is %ld\n",current->id, current->next->id, current->next->next->id );
 
 }
 
+
+void hello()
+{
+	keep_going = 0;
+	printf("woohoo\n");
+	return;
+}
 void gtthread_init(long period)
 {
 	period_t = period;
@@ -141,6 +164,8 @@ void gtthread_init(long period)
 	main_t->num_children = 0;
 	gt_id++;
 	current = main_t;
+
+	
 	add_thread(main_t);
 	init_timer(period_t);	
 }
@@ -148,6 +173,7 @@ void gtthread_init(long period)
 void gtthread_retarg(void *(*start_routine)(void *),void *arg)
 {
 	void *retval = start_routine(arg);
+	//printf("in retarg in thread %d\n", current->id);
 	gtthread_exit(retval);
 }
 
@@ -155,33 +181,37 @@ int gtthread_create(struct gtthread_t *thread, void *(*start_routine)(void *),vo
 {
 	struct gtthread_t *new_t = &gtarray[gt_id];
 	new_t->id = gt_id;
+	//printf("gt id is %d\n",gt_id);
 	gt_id++;
+	
 	new_t->next = NULL;
 	new_t->terminated= 0;
 	new_t->parent = current;
 	new_t->num_children = 0;
 	current->num_children++;
 	thread = new_t;
-	char stack1[16384];
+	//char stack1[16384];
 	getcontext(&new_t->context);
-	new_t->context.uc_stack.ss_sp = stack1;
-        new_t->context.uc_stack.ss_size = sizeof(stack1);
+	new_t->context.uc_stack.ss_sp = malloc(16384);
+        new_t->context.uc_stack.ss_size = 16384;
         new_t->context.uc_link = 0; // why???
+	new_t->context.uc_stack.ss_flags=0;
 	makecontext(&new_t->context, gtthread_retarg,2,start_routine,arg);
 	add_thread(new_t);
-	current = new_t;
+	
 }
 
 int  gtthread_join(struct gtthread_t thread, void **status)
 {
 	long int temp_id = thread.id;	
-	struct gtthread *temp = &gtarray[temp_id];
+	struct gtthread_t *temp	 = &gtarray[temp_id];
 	while(temp->terminated!=1)
 		gtthread_yield();
 }
 
 void gtthread_yield()
 {
+	//printf("yielding\n");
 	sched_yield();
 }
 
@@ -190,21 +220,17 @@ void gtthread_exit(void *retval)
 	current->terminated = 1;	
 	current->retval = retval;
 	while(current->num_children>0)
+	{
 		gtthread_yield();
-	
-	if(current = main_t)
+	}
+	if(current == main_t)
 		exit(0);
 	delete_thread(current);
-
+	raise(SIGVTALRM);
 
 }
 
 
-void hello()
-{
-	keep_going = 0;
-	printf("woohoo\n");
-}
 
 void hello2()
 {
@@ -214,11 +240,12 @@ void hello2()
 
 void main()
 {
-	struct gtthread_t t1, t2;
-	gtthread_init(1);
+	struct gtthread_t t1, t2,t3;
+	gtthread_init(10);
 	gtthread_create(&t1, hello, (void*)1000);
-	gtthread_create(&t1, hello2, (void*)1000);
-	printf("id is %d\n",current->id );	
+	gtthread_create(&t2, hello2, (void*)1000);
+	gtthread_create(&t3, hello, (void*)1000);
+	//printf("id is %d\n",current->id );	
 	
 	
 	int i;
@@ -227,8 +254,10 @@ void main()
 		printf("in main:%d\n", i);
 	}
 	//swapcontext(&ctxt_main,&gtarray[1].context);
+	
 
-	printf("bla\n");
+	//printf("bla\n");
+	gtthread_exit(NULL);
 	return;
 
 }
